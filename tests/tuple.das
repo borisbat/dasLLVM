@@ -1,48 +1,56 @@
+options gen2
 require dastest/testing_boost
 
 require jit
 
-typedef
-    FooT = tuple<a:int;b:float;c:string;d:int>
-    BarT = tuple<a:int;foo:FooT;b:int>
+typedef FooT = tuple<a:int;b:float;c:string;d:int>
+typedef BarT = tuple<a:int;foo:FooT;b:int>
+
 
 [jit]
-def tuple_field ( var f : FooT )
+def tuple_field ( var f : FooT ) {
     f.a = 1
     f.b = 2.0
     f.c = "hello"
     return f.d
+}
 
 [jit]
-def make_tuple_cmres : FooT
-    return [[auto 1, 0.0, "bar", 0]]
+def make_tuple_cmres : FooT {
+    return  (1, 0.0, "bar", 0)
+}
 
 [jit]
-def make_tuple_with_subtuple_cmres : BarT
-    return [[auto 1, [[auto 2, 3., "", 0]], 4]]
+def make_tuple_with_subtuple_cmres : BarT {
+    return  (1,  (2, 3., "", 0), 4)
+}
 
-def FooT : FooT
-    return [[auto 1234, 1234.0, "1234", 1234]]
-
-[jit]
-def make_tuple_with_field_call_to_cmres : BarT
-    return [[auto 1, FooT(), 4]]
+def FooT : FooT {
+    return  (1234, 1234.0, "1234", 1234)
+}
 
 [jit]
-def make_tuple_on_stack(which:bool) : FooT
-    var a = [[auto 1, 2.0, "3", 4]]
-    var b = [[auto 2, 3.0, "4", 5]]
+def make_tuple_with_field_call_to_cmres : BarT {
+    return  (1, FooT(), 4)
+}
+
+[jit]
+def make_tuple_on_stack(which:bool) : FooT {
+    var a =  (1, 2.0, "3", 4)
+    var b =  (2, 3.0, "4", 5)
     return which ? a : b
+}
 
 [jit]
-def make_tuple_with_subtuple_on_stack(which:bool) : BarT
-    var a = [[auto 1, [[auto 2, 3., "", 0]], 4]]
-    var b = [[auto 2, [[auto 3, 4., "", 0]], 5]]
+def make_tuple_with_subtuple_on_stack(which:bool) : BarT {
+    var a =  (1,  (2, 3., "", 0), 4)
+    var b =  (2,  (3, 4., "", 0), 5)
     return which ? a : b
+}
 
 [test]
-def test_tuple ( t:T? )
-    t |> run("tuple field") <| @ ( t : T? )
+def test_tuple ( t:T? ) {
+    t |> run("tuple field") <| @ ( t : T? ) {
         var f : FooT
         f.d=13
         t |> success ( is_jit_function(@@tuple_field) )
@@ -51,14 +59,16 @@ def test_tuple ( t:T? )
         t |> equal ( 1, f.a )
         t |> equal ( 2.0, f.b )
         t |> equal ( "hello", f.c )
-    t |> run("make tuple cmres") <| @ ( t : T? )
+    }
+    t |> run("make tuple cmres") <| @ ( t : T? ) {
         var f = make_tuple_cmres()
         t |> success ( is_jit_function(@@make_tuple_cmres) )
         t |> equal ( 1, f.a )
         t |> equal ( 0.0, f.b )
         t |> equal ( "bar", f.c )
         t |> equal ( 0, f.d )
-    t |> run("make struct with substruct cmres") <| @ ( t : T? )
+    }
+    t |> run("make struct with substruct cmres") <| @ ( t : T? ) {
         var f = make_tuple_with_subtuple_cmres()
         t |> success ( is_jit_function(@@make_tuple_with_subtuple_cmres) )
         t |> equal ( 1, f.a )
@@ -67,7 +77,8 @@ def test_tuple ( t:T? )
         t |> equal ( "", f.foo.c )
         t |> equal ( 0, f.foo.d )
         t |> equal ( 4, f.b )
-    t |> run("make struct with substruct equal to call to cmres") <| @ ( t : T? )
+    }
+    t |> run("make struct with substruct equal to call to cmres") <| @ ( t : T? ) {
         var f = make_tuple_with_field_call_to_cmres()
         t |> success ( is_jit_function(@@make_tuple_with_field_call_to_cmres) )
         t |> equal ( 1, f.a )
@@ -76,7 +87,8 @@ def test_tuple ( t:T? )
         t |> equal ( "1234",f.foo.c )
         t |> equal ( 1234,  f.foo.d )
         t |> equal ( 4, f.b )
-    t |> run("make struct on stack") <| @ ( t : T? )
+    }
+    t |> run("make struct on stack") <| @ ( t : T? ) {
         var a = make_tuple_on_stack(true)
         var b = make_tuple_on_stack(false)
         t |> success ( is_jit_function(@@make_tuple_on_stack) )
@@ -88,7 +100,8 @@ def test_tuple ( t:T? )
         t |> equal ( 3.,  b.b )
         t |> equal ( "4", b.c )
         t |> equal ( 5,   b.d )
-    t |> run("make struct with substruct on stack") <| @ ( t : T? )
+    }
+    t |> run("make struct with substruct on stack") <| @ ( t : T? ) {
         var a = make_tuple_with_subtuple_on_stack(true)
         var b = make_tuple_with_subtuple_on_stack(false)
         t |> success ( is_jit_function(@@make_tuple_with_subtuple_on_stack) )
@@ -104,3 +117,5 @@ def test_tuple ( t:T? )
         t |> equal ( "", b.foo.c )
         t |> equal ( 0,  b.foo.d )
         t |> equal ( 5,  b.b )
+    }
+}
