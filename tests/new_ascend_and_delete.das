@@ -1,3 +1,4 @@
+options gen2
 options strict_smart_pointers = false
 
 require dastest/testing_boost
@@ -7,59 +8,72 @@ require jit
 require UnitTest
 
 [jit]
-def test_new ( t : T? )
+def test_new ( t : T? ) {
     var f = new FancyClass()
     t |> equal( 13, f.value )
+}
 
 [jit]
-def test_ascend ( t : T? )
-    var f = new [[FancyClass() value=123]]
+def test_ascend ( t : T? ) {
+    var f = new FancyClass( value=123)
     t |> equal( 123, f.value )
+}
 
 [jit]
-def test_delete ( t : T?; var f : FancyClass? )
-    unsafe
+def test_delete ( t : T?; var f : FancyClass? ) {
+    unsafe {
         delete f
+    }
     assert(f==null)
+}
 
 [test]
-def test_new_and_ascend_delete ( t:T? )
-    t |> run("new") <| @ ( t : T? )
+def test_new_and_ascend_delete ( t:T? ) {
+    t |> run("new") <| @ ( t : T? ) {
         test_new(t)
-    t |> run("ascend") <| @ ( t : T? )
+    }
+    t |> run("ascend") <| @ ( t : T? ) {
         test_ascend(t)
-    t |> run("delete") <| @ ( t : T? )
+    }
+    t |> run("delete") <| @ ( t : T? ) {
         test_delete(t, new FancyClass())
+    }
+}
 
 [jit]
-def return_smart_ptr ( t : T? )
+def return_smart_ptr ( t : T? ) {
     verify(getTotalTestObjectSmart()==0)
     var ptr <- makeTestObjectSmart()
     t |> equal(1u, countTestObjectSmart(ptr))
     t |> equal(1, getTotalTestObjectSmart())
-    unsafe
+    unsafe {
         delete ptr
+    }
     t |> equal(null, ptr)
     t |> equal(0, getTotalTestObjectSmart())
+}
 
 [jit]
-def inside_scope_test
+def inside_scope_test {
     var sptr <- new TestObjectSmart
     verify(getTotalTestObjectSmart()==1)
     return get_ptr(sptr)
+}
 
 [jit]
-def scope_test ( t : T? )
+def scope_test ( t : T? ) {
     t |> equal(0, getTotalTestObjectSmart())
     let lostPtr = inside_scope_test()       // we loose one in there, return regular pointer, and cast it to smart_ptr again
     t |> equal(1, getTotalTestObjectSmart())
-    unsafe
+    unsafe {
         var sptr : smart_ptr<TestObjectSmart> <- reinterpret< smart_ptr<TestObjectSmart> >(lostPtr)
         delete sptr
+    }
     t |> equal(0, getTotalTestObjectSmart())
+}
 
 [jit]
-def inside_move_test ( t:T? )
+def inside_move_test ( t:T? ) {
     t |> equal(0, getTotalTestObjectSmart())
     var t1 <- new TestObjectSmart
     var t2 <- t1                            // unsafe operation
@@ -67,18 +81,21 @@ def inside_move_test ( t:T? )
     t |> equal(1u, smart_ptr_use_count(t2))
     t |> equal(1, getTotalTestObjectSmart())
     return <- t2
+}
 
 [jit]
-def move_test ( t : T? )
+def move_test ( t : T? ) {
     t |> equal(0, getTotalTestObjectSmart())
     var D <- inside_move_test(t)
     t |> equal(1, getTotalTestObjectSmart())
-    unsafe
+    unsafe {
         delete D
+    }
     t |> equal(0, getTotalTestObjectSmart())
+}
 
 [jit]
-def ref_count_test ( t : T? )
+def ref_count_test ( t : T? ) {
     t |> equal(0, getTotalTestObjectSmart())
     var sptr <- new TestObjectSmart         // ref_count = 1
     t |> equal(1, getTotalTestObjectSmart())
@@ -102,23 +119,27 @@ def ref_count_test ( t : T? )
     t |> success(fptr==sptr)
     t |> equal(3u, smart_ptr_use_count(sptr))
     t |> equal(1, getTotalTestObjectSmart())
-    unsafe
+    unsafe {
         delete sptr                             // ref_count = 2
+    }
     t |> equal(1, getTotalTestObjectSmart())
     t |> equal(0u, smart_ptr_use_count(sptr))
     t |> equal(2u, smart_ptr_use_count(qptr))
-    unsafe
+    unsafe {
         delete qptr                             // ref_count = 1
+    }
     t |> equal(1, getTotalTestObjectSmart())
     t |> equal(0u, smart_ptr_use_count(qptr))
     t |> equal(1u, smart_ptr_use_count(fptr))
-    unsafe
+    unsafe {
         delete fptr                             // physical delete
+    }
     t |> equal(0, getTotalTestObjectSmart())
     t |> equal(0u, smart_ptr_use_count(fptr))
+}
 
 [jit]
-def access_test ( t : T? )
+def access_test ( t : T? ) {
     t |> equal(0, getTotalTestObjectSmart())
     var ptr <- new TestObjectSmart
     t |> equal(1234, ptr.fooData)    //  .
@@ -126,30 +147,40 @@ def access_test ( t : T? )
     t |> equal(1234, D)
     ptr ?. fooData ?? D = 13        // ?? lvalue
     t |> equal (13, ptr.fooData)
-    unsafe
+    unsafe {
         delete ptr
+    }
     D = ptr ?. fooData ?? 2
     t |> equal(2, D)
-    unsafe
+    unsafe {
         ptr <- new TestObjectSmart
         ptr.first <- new TestObjectSmart
+    }
     t |> success(ptr.first.fooData==1234)
     t |> success(ptr ?. first ?. fooData ?? 13==1234)
-    unsafe
+    unsafe {
         delete ptr.first
         delete ptr
+    }
     t |> equal(0, getTotalTestObjectSmart())
+}
 
 [test]
-def test_smart_ptr ( t:T? )
-    t |> run("scope test") <| @ ( t : T? )
+def test_smart_ptr ( t:T? ) {
+    t |> run("scope test") <| @ ( t : T? ) {
         scope_test(t)
-    t |> run("move test") <| @ ( t : T? )
+    }
+    t |> run("move test") <| @ ( t : T? ) {
         scope_test(t)
-    t |> run("ref count test") <| @ ( t : T? )
+    }
+    t |> run("ref count test") <| @ ( t : T? ) {
         ref_count_test(t)
-    t |> run("access test") <| @ ( t : T? )
+    }
+    t |> run("access test") <| @ ( t : T? ) {
         access_test(t)
-    t |> run("return smart ptr from C++") <| @ ( t : T? )
+    }
+    t |> run("return smart ptr from C++") <| @ ( t : T? ) {
         return_smart_ptr(t)
+    }
+}
 
