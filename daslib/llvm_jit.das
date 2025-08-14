@@ -803,11 +803,7 @@ class LlvmJitVisitor : AstVisitor {
             vptrtype = LLVMPointerType(vtype, 0u)
         } else {
             vtype = type_to_llvm_type(arg._type)
-            if (arg._type.isGoodBlockType) {
-                vptrtype = vtype
-            } else {
-                vptrtype = get_type_pointer(arg._type)
-            }
+            vptrtype = get_type_pointer(arg._type)
         }
         var v_ptr : LLVMOpaqueValue?
         if (arg.flags.aliasCMRES) {
@@ -2329,7 +2325,7 @@ class LlvmJitVisitor : AstVisitor {
     def before_else(expr : smart_ptr<ExprIfThenElse>) : void {
         var blk & = unsafe(ite2blocks[get_expr_ptr(expr)])
         if (!current_block_terminates()) {
-            LLVMBuildBr(g_builder, ite2blocks[get_expr_ptr(expr)].if_end)
+            LLVMBuildBr(g_builder, blk.if_end)
         } else {
             blk.if_true_terminates = true
         }
@@ -2461,7 +2457,7 @@ class LlvmJitVisitor : AstVisitor {
         // add variable to be looked up
         var vtype = type_to_llvm_type(svar._type)
         var vptrtype = get_type_pointer(svar._type)
-        if (svar._type.isRef) {
+        if (svar._type.flags.ref) {
             vtype = vptrtype
             vptrtype = LLVMPointerType(vptrtype, 0u)
         }
@@ -2664,7 +2660,7 @@ class LlvmJitVisitor : AstVisitor {
                 }
             }
         }
-        // now, final block if there is anythign there
+        // now, final block if there is anything there
         if (length(body.finalList) != 0) {
             visit_finally(body, adapter)
         }
@@ -2748,9 +2744,9 @@ class LlvmJitVisitor : AstVisitor {
         v_ptr = LLVMBuildGEP2(g_builder, LLVMInt8Type(), v_ptr, LLVMConstInt(LLVMInt32Type(), uint64(offset + field_offset), 0), "[{index}].{decl.name}")
         v_ptr = LLVMBuildPointerCast(g_builder, v_ptr, get_type_pointer(expr.makeType.argTypes[field_index]), "")
         if (decl.value |> isMakeLocal) {
-            pass // do nothing. we already taken care of makeLocal in preVisitExprMakeVariantField
+            pass // do nothing. we already took care of makeLocal in preVisitExprMakeVariantField
         } elif (isCall2CMRES(decl.value)) {
-            pass // do nothing. we already handle this in preVisitExprMakeVariantField
+            pass // do nothing. we already handled this in preVisitExprMakeVariantField
         } else {
             if (decl.flags.moveSemantics) {
                 build_move(v_ptr, decl.value, false)   // TODO: verify
@@ -2933,9 +2929,9 @@ class LlvmJitVisitor : AstVisitor {
         v_ptr = LLVMBuildGEP2(g_builder, LLVMInt8Type(), v_ptr, LLVMConstInt(LLVMInt32Type(), uint64(offset), 0), "[{index}].{decl.name}")
         v_ptr = LLVMBuildPointerCast(g_builder, v_ptr, get_type_pointer(field_type), "")
         if (decl.value |> isMakeLocal) {
-            pass // do nothign. we already taken care of makeLocal in preVisitExprMakeStructField
+            pass // do nothing. we already took care of makeLocal in preVisitExprMakeStructField
         } elif (isCall2CMRES(decl.value)) {
-            pass // do nothing. we already handle this in preVisitExprMakeStructField
+            pass // do nothing. we already handled this in preVisitExprMakeStructField
         } else {
             if (decl.flags.moveSemantics) {
                 build_move(v_ptr, decl.value, false)   // TODO: verify
@@ -3014,9 +3010,9 @@ class LlvmJitVisitor : AstVisitor {
         v_ptr = LLVMBuildGEP2(g_builder, LLVMInt8Type(), v_ptr, LLVMConstInt(LLVMInt32Type(), uint64(offset), 0), "[{index}]")
         v_ptr = LLVMBuildPointerCast(g_builder, v_ptr, get_type_pointer(expr.recordType), "")
         if (init |> isMakeLocal) {
-            pass // do nothign. we already taken care of makeLocal in preVisitExprMakeArrayField
+            pass // do nothing. we already took care of makeLocal in preVisitExprMakeArrayField
         } elif (isCall2CMRES(init)) {
-            pass // do nothing. we already handle this in preVisitExprMakeArrayField
+            pass // do nothing. we already handled this in preVisitExprMakeArrayField
         } else {
             if (expr.recordType.canCopy) {
                 build_copy(v_ptr, init)
@@ -3102,9 +3098,9 @@ class LlvmJitVisitor : AstVisitor {
         v_ptr = LLVMBuildGEP2(g_builder, LLVMInt8Type(), v_ptr, LLVMConstInt(LLVMInt32Type(), uint64(offset), 0), "tuple_{index}{argName}")
         v_ptr = LLVMBuildPointerCast(g_builder, v_ptr, get_type_pointer(expr.makeType.argTypes[index]), "")
         if (init |> isMakeLocal) {
-            pass // do nothign. we already taken care of makeLocal in preVisitExprMakeStructField
+            pass // do nothing. we already took care of makeLocal in preVisitExprMakeStructField
         } elif (isCall2CMRES(init)) {
-            pass // do nothing. we already handle this in preVisitExprMakeStructField
+            pass // do nothing. we already handled this in preVisitExprMakeStructField
         } else {
             if (expr.makeType.canCopy) {
                 build_copy(v_ptr, init)
@@ -3605,6 +3601,7 @@ class LlvmJitVisitor : AstVisitor {
             FUNC = LLVMBuildLoad2(g_builder, g_t_function, FUNC, "FUNC")
             var SIMFUNCTION = LLVMBuildExtractValue(g_builder, FUNC, uint(JIT_FUNCTION.SIM_FUNCTION), "SIMFUNCTION")
             SIMFUNCTION = LLVMBuildPointerCast(g_builder, SIMFUNCTION, LLVMPointerType(LLVMVoidType(), 0u), "")
+            check_ptr_zero(SIMFUNCTION, expr.at, "invoke null method")
             var params : array<LLVMOpaqueValue?>
             params |> push(SIMFUNCTION)
             params |> push(args)
@@ -3628,6 +3625,7 @@ class LlvmJitVisitor : AstVisitor {
             var FUNC = getE(expr.arguments[0])
             var SIMFUNCTION = LLVMBuildExtractValue(g_builder, FUNC, uint(JIT_FUNCTION.SIM_FUNCTION), "SIMFUNCTION")
             SIMFUNCTION = LLVMBuildPointerCast(g_builder, SIMFUNCTION, LLVMPointerType(LLVMVoidType(), 0u), "")
+            check_ptr_zero(SIMFUNCTION, expr.at, "invoke null function")
             var params : array<LLVMOpaqueValue?>
             params |> push(SIMFUNCTION)
             params |> push(args)
@@ -3676,6 +3674,7 @@ class LlvmJitVisitor : AstVisitor {
         } elif (blockT.isGoodBlockType) {
             var args = build_array_of_arguments(expr.arguments, true)
             var blk = getE(expr.arguments[0])
+            check_ptr_zero(blk, expr.at, "invoke null block")
             var params : array<LLVMOpaqueValue?>
             params |> push(blk)
             params |> push(args)
@@ -3841,6 +3840,8 @@ class LlvmJitVisitor : AstVisitor {
         if (expr.ascendFlags.useStackRef) {
             let stackref_ptr = LLVMBuildPointerCast(g_builder, mks_ptr, LLVMPointerType(LLVMInt8Type(), 0u), "")
             setE(expr.subexpr, stackref_ptr)
+        } elif (!expr.subexpr._type.isHandle) {
+            call2cmres[get_ptr(expr.subexpr)] = mks_ptr
         }
         mks_ptr = LLVMBuildPointerCast(g_builder, mks_ptr, type_to_llvm_type(expr._type), "")
         setE(expr, mks_ptr)
@@ -4407,7 +4408,8 @@ class LlvmJitVisitor : AstVisitor {
                 failed_E(expr, "unsupported ++ type {opType}")
             }
             LLVMBuildStoreAligned(g_builder, res_v, sexpr, uint(expr.subexpr._type.alignOf))
-            setE(expr, sexpr_v)
+            let is_prefix = expr.op == "++" ? true : false;
+            setE(expr, is_prefix ? res_v : sexpr_v)
         } elif (expr.op == "---" || expr.op == "--") {
             var expr_t = base_type_to_llvm_type(opType.baseType)
             var sexpr_v = LLVMBuildLoadData2Aligned(g_builder, type_to_llvm_type(expr.subexpr._type), sexpr, uint(expr.subexpr._type.alignOf), "")
@@ -4420,7 +4422,8 @@ class LlvmJitVisitor : AstVisitor {
                 failed_E(expr, "unsupported -- type {opType}")
             }
             LLVMBuildStoreAligned(g_builder, res_v, sexpr, uint(expr.subexpr._type.alignOf))
-            setE(expr, sexpr_v)
+            let is_prefix = expr.op == "--" ? true : false;
+            setE(expr, is_prefix ? res_v : sexpr_v)
         } elif (expr.op == "~") {
             if (isBinary(opType)) {
                 setE(expr, LLVMBuildNot(g_builder, sexpr, ""))
@@ -4570,7 +4573,11 @@ class LlvmJitVisitor : AstVisitor {
                         var temp_load = LLVMBuildLoad2(g_builder, subPtrType, getE(expr.subexpr), "return_cmres_temp_load_")
                         setE(expr.subexpr, temp_load)
                     }
-                    build_copy(get_cmres_param(), expr.subexpr)
+                    if (expr.returnFlags.moveSemantics) {
+                        build_move(get_cmres_param(), expr.subexpr, true)
+                    } else {
+                        build_copy(get_cmres_param(), expr.subexpr)
+                    }
                 }
                 LLVMBuildRetVoid(g_builder)
             } elif (returnType.isPointer && (expr.subexpr is ExprConstPtr)) {// return null
@@ -4685,14 +4692,10 @@ class LlvmJitVisitor : AstVisitor {
         var captured <- capture_block(expr._block)
         // build block type
         var blk_fields <- build_block_type()
-        blk_fields |> push(LLVMArrayType(LLVMFloat4Type(), 8u))
+        blk_fields |> push(LLVMArrayType(LLVMFloat4Type(), 10u))
         var first_field_index = length(blk_fields)
         for (c in captured) {
-            if (c.variable._type.isGoodBlockType) {
-                blk_fields |> push(type_to_llvm_type(c.variable._type))
-            } else {
-                blk_fields |> push(LLVMPointerType(type_to_llvm_type(c.variable._type), 0u))
-            }
+            blk_fields |> push(LLVMPointerType(type_to_llvm_type(c.variable._type), 0u))
         }
         var this_block_type = LLVMStructType(blk_fields)
         // allocate block, set captured fields
