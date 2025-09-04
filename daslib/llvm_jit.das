@@ -557,11 +557,7 @@ class LlvmJitVisitor : AstVisitor {
             LLVMConstInt(LLVMInt32Type(), at.last_column |> uint64(), 0),
             LLVMConstInt(LLVMInt32Type(), at.last_line |> uint64(), 0)
         )
-        var line_info_init = LLVMGetUndef(line_info_type)
-        for (i in urange(init_values |> length())) {
-            line_info_init = g_builder |> LLVMBuildInsertValue(line_info_init, init_values[i], i, "")
-        }
-        // let LineInfoInit = LLVMConstStruct(unsafe(addr(InitValues[0])), InitValues |> length() |> uint(), 0)
+        let line_info_init = LLVMConstStruct(unsafe(addr(init_values[0])), init_values |> length() |> uint(), 0)
         LLVMSetInitializer(line_info_global, line_info_init)
         return line_info_global
     }
