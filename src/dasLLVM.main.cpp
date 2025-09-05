@@ -38,6 +38,21 @@ Func test_abi_func ( Func a, Context * ctx ) {
     return a;
 }
 
+static vector<LLVMOpaqueExecutionEngine *> activeJitContexts;
+
+void AddContext( LLVMOpaqueExecutionEngine *jit_ctx) {
+    activeJitContexts.emplace_back(jit_ctx);
+}
+
+void DeleteJitContexts( const TBlock<void,LLVMOpaqueExecutionEngine *> &deleter, Context * ctx, LineInfoArg * at ) {
+    for (auto jit_ctx: activeJitContexts) {
+        vec4f args[1];
+        args[0] = cast<LLVMOpaqueExecutionEngine *>::from(jit_ctx);
+        ctx->invoke(deleter, args, nullptr, at);
+    }
+    activeJitContexts.clear();
+}
+
 void diagnosticHandler(LLVMDiagnosticInfoRef DI, void *) {
     int ll = LogLevel::info;
     switch (LLVMGetDiagInfoSeverity(DI)) {
@@ -71,6 +86,10 @@ void Module_dasLLVM::initMain() {
 		->args({"a","b","c"});
 	addExtern<DAS_BIND_FUN(test_abi_func) >(*this,lib,"test_abi_func",SideEffects::worstDefault,"test_abi_func")
 		->args({"fn","context"});
+    addExtern<DAS_BIND_FUN(AddContext) >(*this,lib,"add_jit_context",SideEffects::worstDefault, "AddContext")
+        ->args({"ctx"});
+    addExtern<DAS_BIND_FUN(DeleteJitContexts) >(*this,lib,"delete_jit_contexts",SideEffects::worstDefault, "DeleteJitContexts")
+        ->args({"blk","context", "at"});
     addExtern<DAS_BIND_FUN(set_context_diagnostics_to_log) >(*this,lib,"set_context_diagnostics_to_log",SideEffects::worstDefault,"set_context_diagnostics_to_log")
 		->args({"llvm_context"});
 }

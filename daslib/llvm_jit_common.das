@@ -77,13 +77,6 @@ let public FN_JIT_DEBUG_EXIT        = "jit_debug_exit"
 let public FN_JIT_DEBUG_LINE        = "jit_debug_line"
 let public FN_JIT_AST_TYPEDECL      = "jit_ast_typedecl"
 
-struct JitEngine {
-    mod : LLVMOpaqueModule?
-    engine : LLVMExecutionEngineRef
-}
-
-var private g_all_engines : array<JitEngine>
-
 var public g_mod : LLVMOpaqueModule?
 var public g_engine : LLVMExecutionEngineRef
 var public g_failed : bool = false
@@ -566,31 +559,16 @@ def public finalize_jit {
         }
     }
     g_engine |> LLVMRunStaticConstructors()
-    g_all_engines |> push(JitEngine(
-        mod <- g_mod,
-        engine <- g_engine
-    ))
+    add_jit_context(g_engine)
     unsafe {
         delete g_str2v
     }
 }
 
-[finalize]
+[finalize, no_jit] // no_jit is necessary!
 def private finalize_all_jit {
-    for (je in g_all_engines) {
-        LLVMDisposeExecutionEngine(je.engine); je.engine = null
-        g_t_function = null
-        g_t_simFunction = null
-        g_t_block = null
-        g_t_lambda = null
-        g_t_stack_state = null
-        g_t_iterator = null
-        g_t_sequence = null
-    }
-        // TODO: figure out why this crashes
-        // LLVMDisposeModule(je.mod); je.mod = null
-    unsafe {
-        delete g_all_engines
+    delete_jit_contexts <| $(var engine : LLVMExecutionEngineRef) {
+        LLVMDisposeExecutionEngine(engine);
     }
 }
 

@@ -557,11 +557,7 @@ class LlvmJitVisitor : AstVisitor {
             LLVMConstInt(LLVMInt32Type(), at.last_column |> uint64(), 0),
             LLVMConstInt(LLVMInt32Type(), at.last_line |> uint64(), 0)
         )
-        var line_info_init = LLVMGetUndef(line_info_type)
-        for (i in urange(init_values |> length())) {
-            line_info_init = g_builder |> LLVMBuildInsertValue(line_info_init, init_values[i], i, "")
-        }
-        // let LineInfoInit = LLVMConstStruct(unsafe(addr(InitValues[0])), InitValues |> length() |> uint(), 0)
+        let line_info_init = LLVMConstStruct(unsafe(addr(init_values[0])), init_values |> length() |> uint(), 0)
         LLVMSetInitializer(line_info_global, line_info_init)
         return line_info_global
     }
@@ -584,7 +580,7 @@ class LlvmJitVisitor : AstVisitor {
 
     def get_line_info_ptr(at : LineInfo) {
         let void_ptr = LLVMPointerType(LLVMVoidType(), 0u)
-        let fi = get_file_info_global(g_builder, string(at.fileInfo.name))
+        let fi = get_file_info_global(g_builder, at.fileInfo != null ? string(at.fileInfo.name) : "unknown_filename")
         let line_info_global = create_line_info_global(at, fi)
         let line_info_ptr_global = create_line_info_ptr_global(line_info_global)
         instrument_and_map_global(at, line_info_ptr_global)
@@ -1446,16 +1442,17 @@ class LlvmJitVisitor : AstVisitor {
     }
 
     def build_array_index(var data, tidx : LLVMOpaqueValue?; elemType : TypeDeclPtr; name : string) {
-        var ptr_idx : LLVMOpaqueValue?
-        if (elemType.isVectorType && elemType.vectorDim == 3) {
-            var data_bytes = LLVMBuildPointerCast(g_builder, data, LLVMPointerType(LLVMInt8Type(), 0u), "")
-            var data_idx = LLVMBuildMul(g_builder, tidx, LLVMConstInt(LLVMInt32Type(), 12ul, 0), "")
-            ptr_idx = LLVMBuildGEP2(g_builder, LLVMInt8Type(), data_bytes, data_idx, "")
-            ptr_idx = LLVMBuildPointerCast(g_builder, ptr_idx, LLVMPointerType(type_to_llvm_type(elemType), 0u), name)
+        return LLVMBuildGEP2(g_builder, type_to_llvm_type(elemType), data, tidx, name)
+    }
+
+    def build_vector_index(var data, tidx : LLVMOpaqueValue?; elemType : TypeDeclPtr; name : string) {
+        assert(elemType.isVectorType)
+        var elType = base_type_to_llvm_type(elemType.vectorBaseType)
+        if (!elemType.isRef) {
+            return LLVMBuildExtractElement(g_builder, data, tidx, "vector_at_r2v")
         } else {
-            ptr_idx = LLVMBuildGEP2(g_builder, type_to_llvm_type(elemType), data, tidx, name)
+            return LLVMBuildGEP2(g_builder, elType, data, tidx, name)
         }
-        return ptr_idx
     }
 
     def override visitExprAt(expr : smart_ptr<ExprAt>) : ExpressionPtr {
@@ -1464,7 +1461,7 @@ class LlvmJitVisitor : AstVisitor {
         assume subExprT = expr.subexpr._type
         if (subExprT.isPointer) {
             if (thisFunc != null && !thisFunc.flags.unsafeDeref) {
-                check_ptr_zero(tsrc, expr.at)
+                check_ptr_zero(tsrc, expr.at, "dereferencing null pointer, {expr.subexpr.describe()} is null")
             }
             var ptr_idx = build_array_index(tsrc, tidx, subExprT.firstType, "ptr_at")
             if (expr.atFlags.r2v) {
@@ -1532,7 +1529,7 @@ class LlvmJitVisitor : AstVisitor {
                 var at_r2v = LLVMBuildExtractElement(g_builder, lvec, tidx, "vector_at_r2v")
                 setE(expr, at_r2v)
             } else {
-                var ptr_idx = build_array_index(tsrc, tidx, expr._type, "vector_at")
+                var ptr_idx = build_vector_index(tsrc, tidx, subExprT, "vector_at")
                 setE(expr, ptr_idx)
             }
         } else {
@@ -1633,7 +1630,7 @@ class LlvmJitVisitor : AstVisitor {
                             tsrc, uint(subExprT.alignOf), "vector_at")
                         return LLVMBuildExtractElement(g_builder, lvec, tidx, "vector_at_r2v")
                     } else {
-                        return build_array_index(tsrc, tidx, expr._type, "vector_at")
+                        return build_vector_index(tsrc, tidx, etype, "vector_at")
                     }
                 }
                 lpipe <| $() {
@@ -3204,7 +3201,7 @@ class LlvmJitVisitor : AstVisitor {
     def override visitExprPtr2Ref(expr : smart_ptr<ExprPtr2Ref>) : ExpressionPtr {
         var tsrc = getE(expr.subexpr)
         if (thisFunc != null && !thisFunc.flags.unsafeDeref) {
-            check_ptr_zero(tsrc, expr.at)
+            check_ptr_zero(tsrc, expr.at, "dereferencing null pointer, {expr.subexpr.describe()} is null")
         }
         setE(expr, tsrc)
         return expr
@@ -4234,7 +4231,7 @@ class LlvmJitVisitor : AstVisitor {
             var field_name : string;
             var val_ptr = getE(expr.value)
             if (expr.value._type.isPointer && !expr.derefFlags.unsafeDeref) {
-                check_ptr_zero(val_ptr, expr.at)
+                check_ptr_zero(val_ptr, expr.at, "dereferencing null pointer, {expr.value.describe()} is null")
             }
             val_ptr = LLVMBuildPointerCast(g_builder, val_ptr, LLVMPointerType(LLVMInt8Type(), 0u), "")
             if (expr.field == null && expr.fieldIndex == -1) {
