@@ -18,6 +18,7 @@ require daslib/strings
 require daslib/defer
 require daslib/enum_trait
 require jit
+require fio
 
 let public LLVM_JIT_ENABLED = true || llvm_config::llvm_jit_enabled()
 let public LLVM_JIT_ALL_FUNCTIONS = true || llvm_config::llvm_jit_all_functions()
@@ -39,7 +40,7 @@ let public LLVM_OUTPUT_OJBECT_FILE_NAME = "output.o"
 
 let public LLVM_ENABLE_DLL_LOADING = true
 let public JIT_DLL_OUTPUT = "output.dll"
-let public DASCRIPT_LIBRARY = "libDaScript.lib" // liblibDaScript.a on linux
+let public DASCRIPT_LIBRARY = "libDaScript.a" // liblibDaScript.a on linux
 
 let public LLVM_ENABLE_OPT_PASS = LLVM_DEBUG_EVERYTHING ? false : true
 let public LLVM_OPT_LEVEL = LLVM_DEBUG_EVERYTHING ? 0u : 3u
