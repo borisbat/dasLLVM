@@ -1455,13 +1455,21 @@ class LlvmJitVisitor : AstVisitor {
             get_context_param(),
             get_line_info_ptr(at)
         )
-        var tab_fun = LLVMGetNamedFunction(g_mod, FN_JIT_TABLE_AT(ttype))
+        var tab_fun = LLVMGetNamedGlobal(g_mod, FN_JIT_TABLE_AT(ttype))
         if (tab_fun == null) {
             error("table_at {ttype} function not found")
             return LLVMGetUndef(types.t_int32)
         }
         var typ = g_fn_types[FN_JIT_TABLE_AT(ttype)]
-        return LLVMBuildCall2(g_builder, typ, tab_fun, params, "")
+        tab_fun = LLVMBuildLoad2(g_builder, LLVMPointerType(typ, 0u), tab_fun, "funcc")
+        let ccall = LLVMBuildCall2(g_builder, typ, tab_fun, params, "")
+        LLVMAddCallSiteAttribute(ccall, -1 |> uint(), g_ctx |> LLVMGetEnumAttribute("nounwind"))     // TODO: better no-unwind?
+        LLVMAddCallSiteAttribute(ccall, -1 |> uint(), g_ctx |> LLVMGetEnumAttribute("willreturn"))
+
+        let nocap = g_ctx |> LLVMGetEnumAttribute("nocapture")
+        LLVMAddCallSiteAttribute(ccall, 1u, nocap)
+        LLVMAddCallSiteAttribute(ccall, 4u, nocap)
+        return ccall
     }
 
     def build_table_find(ttype : Type; tab : LLVMOpaqueValue?; key : LLVMOpaqueValue?; valueTypeSize : int) : LLVMOpaqueValue? {
@@ -1471,13 +1479,21 @@ class LlvmJitVisitor : AstVisitor {
             types.ConstI32(uint64(valueTypeSize)),    // valueTypeSize
             get_context_param()
         )
-        var tab_fun = LLVMGetNamedFunction(g_mod, FN_JIT_TABLE_FIND(ttype))
+        var tab_fun = LLVMGetNamedGlobal(g_mod, FN_JIT_TABLE_FIND(ttype))
         if (tab_fun == null) {
             error("table_find {ttype} function not found")
             return LLVMGetUndef(types.t_int32)
         }
         var typ = g_fn_types[FN_JIT_TABLE_FIND(ttype)]
-        return LLVMBuildCall2(g_builder, typ, tab_fun, params, "")
+        tab_fun = LLVMBuildLoad2(g_builder, LLVMPointerType(typ, 0u), tab_fun, "funcc")
+        let ccall = LLVMBuildCall2(g_builder, typ, tab_fun, params, "")
+        LLVMAddCallSiteAttribute(ccall, -1 |> uint(), g_ctx |> LLVMGetEnumAttribute("nounwind"))     // TODO: better no-unwind?
+        LLVMAddCallSiteAttribute(ccall, -1 |> uint(), g_ctx |> LLVMGetEnumAttribute("willreturn"))
+
+        let nocap = g_ctx |> LLVMGetEnumAttribute("nocapture")
+        LLVMAddCallSiteAttribute(ccall, 1u, nocap)
+        LLVMAddCallSiteAttribute(ccall, 4u, nocap)
+        return ccall
     }
 
     def build_array_index(var data, tidx : LLVMOpaqueValue?; elemType : TypeDeclPtr; name : string) {
@@ -3820,13 +3836,22 @@ class LlvmJitVisitor : AstVisitor {
             types.ConstI32(uint64(valueTypeSize)),    // valueTypeSize
             get_context_param()
         )
-        var tab_fun = LLVMGetNamedFunction(g_mod, FN_JIT_TABLE_ERASE(ttype))
+        var tab_fun = LLVMGetNamedGlobal(g_mod, FN_JIT_TABLE_ERASE(ttype))
         if (tab_fun == null) {
             error("table_erase {ttype} function not found")
             return LLVMGetUndef(types.t_int32)
         }
         var typ = g_fn_types[FN_JIT_TABLE_ERASE(ttype)]
-        return LLVMBuildCall2(g_builder, typ, tab_fun, params, "")
+        tab_fun = LLVMBuildLoad2(g_builder, LLVMPointerType(typ, 0u), tab_fun, "funcc")
+        let ccall = LLVMBuildCall2(g_builder, typ, tab_fun, params, "")
+        LLVMAddCallSiteAttribute(ccall, -1 |> uint(), g_ctx |> LLVMGetEnumAttribute("nounwind"))     // TODO: better no-unwind?
+        LLVMAddCallSiteAttribute(ccall, -1 |> uint(), g_ctx |> LLVMGetEnumAttribute("willreturn"))
+
+        let nocap = g_ctx |> LLVMGetEnumAttribute("nocapture")
+        LLVMAddCallSiteAttribute(ccall, 1u, nocap)
+        LLVMAddCallSiteAttribute(ccall, 4u, nocap)
+
+        return ccall
     }
 
     def override visitExprErase(expr : smart_ptr<ExprErase>) : ExpressionPtr {

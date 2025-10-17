@@ -48,6 +48,7 @@ let public LLVM_JIT_OPT_LEVEL = LLVM_DEBUG_EVERYTHING ? 0u : 3u
 let public LLVM_LOG_RESULT = LLVM_DEBUG_EVERYTHING || LLVM_DEBUG_RESULT
 let public LLVM_INLINE_THRESHOLD = 1024u // 225u
 
+// This functions should be extern "C" and their name should match with c-name.
 let public FN_JIT_EXCEPTION         = "jit_exception"
 let public FN_JIT_CALL_OR_FASTCALL  = "jit_call_or_fastcall"
 let public FN_JIT_CALL_WITH_CMRES   = "jit_call_with_cmres"
@@ -105,6 +106,23 @@ var public g_t_sequence : LLVMOpaqueType?
 
 var g_str2v : table<string; LLVMOpaqueValue?>
 
+class Attributes {
+    noreturn : LLVMOpaqueAttributeRef?
+    readonly : LLVMOpaqueAttributeRef?
+    nounwind : LLVMOpaqueAttributeRef?
+    willreturn : LLVMOpaqueAttributeRef?
+    nocapture : LLVMOpaqueAttributeRef?
+
+    def Attributes(ctx : LLVMContextRef) {
+        noreturn = g_ctx |> LLVMGetEnumAttribute("noreturn")
+        readonly = g_ctx |> LLVMGetEnumAttribute("readonly")
+        nounwind = g_ctx |> LLVMGetEnumAttribute("nounwind")
+        willreturn = g_ctx |> LLVMGetEnumAttribute("willreturn")
+        nocapture = g_ctx |> LLVMGetEnumAttribute("nocapture")
+    }
+
+}
+
 enum public JIT_ARRAY {
     DATA
     SIZE
@@ -157,6 +175,7 @@ enum public JIT_SEQUENCE {
     ITERATOR
 }
 
+// We use global variable to store pointer to jit table methods.
 def public FN_JIT_TABLE_AT(t : Type) {
     return "`jit`table_at`{t}`"
 }
@@ -175,6 +194,47 @@ def public LLVMAddFunctionWithType(mod : LLVMModuleRef; name : string; typ : LLV
     var rv = LLVMAddFunction(mod, name, typ)
     g_fn_types[name] = typ
     return rv
+}
+
+[macro_function]
+def private add_table_methods(llvm_module : LLVMOpaqueModule?; llvm_engine : LLVMExecutionEngineRef; var types : PrimitiveTypes?; attrs : Attributes?) {
+    // table functions
+    for (t in get_workhorse_types()) {
+        // int32_t jit_table_at ( Table * tab, KeyType key, int32_t valueTypeSize, Context * context )
+        let at_type = LLVMFunctionType(types.t_int32,   // int32_t result
+                fixed_array<LLVMTypeRef>(types.LLVMVoidPtrType(), // table ptr
+                base_type_to_llvm_type(t),                           // key
+                types.t_int32,                                    // valueTypeSize
+                types.LLVMVoidPtrType(),                          // context
+                types.LLVMVoidPtrType(),                          // at
+                ))
+        let at_ptr_type = LLVMPointerType(at_type, 0u)
+        var jit_table_at = LLVMAddGlobal(llvm_module, LLVMPointerType(at_ptr_type, 0u), FN_JIT_TABLE_AT(t))
+        g_fn_types[FN_JIT_TABLE_AT(t)] = at_type
+        LLVMSetInitializer(jit_table_at, types.ConstPtr(get_jit_table_at(unsafe(reinterpret<int> t)) |> intptr(), at_ptr_type))
+        // int32_t jit_table_find ( Table * tab, KeyType key, int32_t valueTypeSize, Context * context )
+        let find_type = LLVMFunctionType(types.t_int32,   // int32_t result
+                fixed_array<LLVMTypeRef>(types.LLVMVoidPtrType(),   // table ptr
+                base_type_to_llvm_type(t),                          // key
+                types.t_int32,                                    // valueTypeSize
+                types.LLVMVoidPtrType()                 // context
+                ))
+        let find_ptr_type = LLVMPointerType(find_type, 0u)
+        var jit_table_find = LLVMAddGlobal(llvm_module, LLVMPointerType(find_ptr_type, 0u), FN_JIT_TABLE_FIND(t))
+        g_fn_types[FN_JIT_TABLE_FIND(t)] = find_type
+        LLVMSetInitializer(jit_table_find, types.ConstPtr(get_jit_table_find(unsafe(reinterpret<int> t)) |> intptr(), find_ptr_type))
+        // bool jit_table_erase ( Table * tab, KeyType key, int32_t valueTypeSize, Context * context )
+        let erase_type = LLVMFunctionType(types.t_int1,                        // bool result
+                fixed_array<LLVMTypeRef>(types.LLVMVoidPtrType(),   // table ptr
+                base_type_to_llvm_type(t),                          // key
+                types.t_int32,                                    // valueTypeSize
+                types.LLVMVoidPtrType()                 // context
+                ))
+        let erase_ptr_type = LLVMPointerType(erase_type, 0u)
+        var jit_table_erase = LLVMAddGlobal(llvm_module, LLVMPointerType(erase_ptr_type, 0u), FN_JIT_TABLE_ERASE(t))
+        g_fn_types[FN_JIT_TABLE_ERASE(t)] = erase_type
+        LLVMSetInitializer(jit_table_erase, types.ConstPtr(get_jit_table_erase(unsafe(reinterpret<int> t)) |> intptr(), erase_ptr_type))
+    }
 }
 
 [macro_function]
@@ -202,12 +262,14 @@ def public init_jit {
         LLVMDisposeMessage(hostcpu)
         LLVMDisposeMessage(features)
     }
-    var noreturn = g_ctx |> LLVMGetEnumAttribute("noreturn")
-    var readonly = g_ctx |> LLVMGetEnumAttribute("readonly")
-    var nounwind = g_ctx |> LLVMGetEnumAttribute("nounwind")
-    var willreturn = g_ctx |> LLVMGetEnumAttribute("willreturn")
-    var nocapture = g_ctx |> LLVMGetEnumAttribute("nocapture")
+    let attrs = new Attributes(g_ctx)
+    assume noreturn = attrs.noreturn
+    assume readonly = attrs.readonly
+    assume nounwind = attrs.nounwind
+    assume willreturn = attrs.willreturn
+    assume nocapture = attrs.nocapture
     build_jit_types()
+
     // add default functions
     var jit_exception = LLVMAddFunctionWithType(g_mod, FN_JIT_EXCEPTION,    // jit_exception(text,context *,lineinfo *)
         LLVMFunctionType(g_prim_t.t_void,
@@ -319,46 +381,9 @@ def public init_jit {
     LLVMAddGlobalMapping(g_engine, jit_array_unlock, get_jit_array_unlock())
     LLVMAddAttributesToFunction(jit_array_unlock, fixed_array(nounwind, willreturn))
     LLVMAddAttributeToFunctionArgumentRange(jit_array_unlock, urange(0, 2), nocapture)
-    // table functions
-    for (t in get_workhorse_types()) {
-        // int32_t jit_table_at ( Table * tab, KeyType key, int32_t valueTypeSize, Context * context )
-        var jit_table_at = LLVMAddFunctionWithType(g_mod, FN_JIT_TABLE_AT(t),
-            LLVMFunctionType(g_prim_t.t_int32,   // int32_t result
-                fixed_array<LLVMTypeRef>(g_prim_t.LLVMVoidPtrType(),   // table ptr
-                base_type_to_llvm_type(t),                          // key
-                g_prim_t.t_int32,                                    // valueTypeSize
-                g_prim_t.LLVMVoidPtrType(),                // context
-                g_prim_t.LLVMVoidPtrType(),                // at
-                )))
-        LLVMAddGlobalMapping(g_engine, jit_table_at, get_jit_table_at(unsafe(reinterpret<int> t)))
-        LLVMAddAttributesToFunction(jit_table_at, fixed_array(nounwind, willreturn))
-        LLVMAddAttributeToFunctionArgument(jit_table_at, 0u, nocapture)
-        LLVMAddAttributeToFunctionArgument(jit_table_at, 3u, nocapture)
-        // int32_t jit_table_find ( Table * tab, KeyType key, int32_t valueTypeSize, Context * context )
-        var jit_table_find = LLVMAddFunctionWithType(g_mod, FN_JIT_TABLE_FIND(t),
-            LLVMFunctionType(g_prim_t.t_int32,   // int32_t result
-                fixed_array<LLVMTypeRef>(g_prim_t.LLVMVoidPtrType(),   // table ptr
-                base_type_to_llvm_type(t),                          // key
-                g_prim_t.t_int32,                                    // valueTypeSize
-                g_prim_t.LLVMVoidPtrType()                 // context
-                )))
-        LLVMAddGlobalMapping(g_engine, jit_table_find, get_jit_table_find(unsafe(reinterpret<int> t)))
-        LLVMAddAttributesToFunction(jit_table_find, fixed_array(nounwind, willreturn))
-        LLVMAddAttributeToFunctionArgument(jit_table_find, 0u, nocapture)
-        LLVMAddAttributeToFunctionArgument(jit_table_find, 3u, nocapture)
-        // bool jit_table_erase ( Table * tab, KeyType key, int32_t valueTypeSize, Context * context )
-        var jit_table_erase = LLVMAddFunctionWithType(g_mod, FN_JIT_TABLE_ERASE(t),
-            LLVMFunctionType(g_prim_t.t_int1,                        // bool result
-                fixed_array<LLVMTypeRef>(g_prim_t.LLVMVoidPtrType(),   // table ptr
-                base_type_to_llvm_type(t),                          // key
-                g_prim_t.t_int32,                                    // valueTypeSize
-                g_prim_t.LLVMVoidPtrType()                 // context
-                )))
-        LLVMAddGlobalMapping(g_engine, jit_table_erase, get_jit_table_erase(unsafe(reinterpret<int> t)))
-        LLVMAddAttributesToFunction(jit_table_erase, fixed_array(nounwind, willreturn))
-        LLVMAddAttributeToFunctionArgument(jit_table_erase, 0u, nocapture)
-        LLVMAddAttributeToFunctionArgument(jit_table_erase, 3u, nocapture)
-    }
+
+    add_table_methods(g_mod, g_engine, g_prim_t, attrs)
+
     // int jit_str_cmp ( char * a, char * b )
     var jit_str_cmp = LLVMAddFunctionWithType(g_mod, FN_JIT_STR_CMP,
         LLVMFunctionType(g_prim_t.t_int32,
