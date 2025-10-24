@@ -15,6 +15,7 @@ require llvm_config
 
 require daslib/ast_boost
 require daslib/strings
+require daslib/strings_boost
 require daslib/defer
 require daslib/enum_trait
 require jit
@@ -35,17 +36,17 @@ let public LLVM_DEBUG_INFO = false //  || LLVM_DEBUG_EVERYTHING
 let public LLVM_JIT_ALWAYS_SOLID = llvm_config::llvm_jit_always_solid()
 var public LLVM_JIT_ALLOW_UNALIGNED_VECTOR_READ_OUT_OF_BOUNDS = false
 
-let public LLVM_OUTPUT_OJBECT_FILE = false
+let public LLVM_OUTPUT_OJBECT_FILE = true
 let public LLVM_OUTPUT_OJBECT_FILE_NAME = "output.o"
 
 let public LLVM_ENABLE_DLL_LOADING = true
 let public JIT_DLL_OUTPUT = "output.dll"
-let public DASCRIPT_LIBRARY = "libDaScript.a" // liblibDaScript.a on linux
+let public DASCRIPT_LIBRARY = "build/liblibDaScript.a" // liblibDaScript.a on linux
 
 let public LLVM_ENABLE_OPT_PASS = LLVM_DEBUG_EVERYTHING ? false : true
-let public LLVM_OPT_LEVEL = LLVM_DEBUG_EVERYTHING ? 0u : 3u
-let public LLVM_SIZE_LEVEL = LLVM_DEBUG_EVERYTHING ? 0u : 3u
-let public LLVM_JIT_OPT_LEVEL = LLVM_DEBUG_EVERYTHING ? 0u : 3u
+let public LLVM_OPT_LEVEL = 0u // LLVM_DEBUG_EVERYTHING ? 0u : 3u
+let public LLVM_SIZE_LEVEL = 0u // LLVM_DEBUG_EVERYTHING ? 0u : 3u
+let public LLVM_JIT_OPT_LEVEL = 0u // LLVM_DEBUG_EVERYTHING ? 0u : 3u
 let public LLVM_LOG_RESULT = LLVM_DEBUG_EVERYTHING || LLVM_DEBUG_RESULT
 let public LLVM_INLINE_THRESHOLD = 1024u // 225u
 
@@ -198,7 +199,7 @@ def public LLVMAddFunctionWithType(mod : LLVMModuleRef; name : string; typ : LLV
 }
 
 [macro_function]
-def private add_table_methods(llvm_module : LLVMOpaqueModule?; llvm_engine : LLVMExecutionEngineRef; var types : PrimitiveTypes?; attrs : Attributes?) {
+def private add_table_methods(llvm_module : LLVMOpaqueModule?; llvm_engine : LLVMExecutionEngineRef; var types : PrimitiveTypes?; var dll : DLLHandle?; attrs : Attributes?) {
     // table functions
     for (t in get_workhorse_types()) {
         // int32_t jit_table_at ( Table * tab, KeyType key, int32_t valueTypeSize, Context * context )
@@ -209,10 +210,18 @@ def private add_table_methods(llvm_module : LLVMOpaqueModule?; llvm_engine : LLV
                 types.LLVMVoidPtrType(),                          // context
                 types.LLVMVoidPtrType(),                          // at
                 ))
+        let at_name = FN_JIT_TABLE_AT(t)
+        g_fn_types[at_name] = at_type
+
+        let at_impl = get_jit_table_at(unsafe(reinterpret<int> t))
         let at_ptr_type = LLVMPointerType(at_type, 0u)
-        var jit_table_at = LLVMAddGlobal(llvm_module, LLVMPointerType(at_ptr_type, 0u), FN_JIT_TABLE_AT(t))
-        g_fn_types[FN_JIT_TABLE_AT(t)] = at_type
-        LLVMSetInitializer(jit_table_at, types.ConstPtr(get_jit_table_at(unsafe(reinterpret<int> t)) |> intptr(), at_ptr_type))
+        var jit_table_at = LLVMAddGlobal(llvm_module, LLVMPointerType(at_ptr_type, 0u), at_name)
+        LLVMSetInitializer(jit_table_at, types.ConstPtr(at_impl |> intptr(), at_ptr_type))
+
+        let at_variable = dll.handle == null ? null : dll.get_function_address(DllName(at_name))
+        if (at_variable != null) {
+            dll.set_function_address(DllName(at_name), at_impl)
+        }
         // int32_t jit_table_find ( Table * tab, KeyType key, int32_t valueTypeSize, Context * context )
         let find_type = LLVMFunctionType(types.t_int32,   // int32_t result
                 fixed_array<LLVMTypeRef>(types.LLVMVoidPtrType(),   // table ptr
@@ -220,10 +229,19 @@ def private add_table_methods(llvm_module : LLVMOpaqueModule?; llvm_engine : LLV
                 types.t_int32,                                    // valueTypeSize
                 types.LLVMVoidPtrType()                 // context
                 ))
+        let find_name = FN_JIT_TABLE_FIND(t)
+        g_fn_types[find_name] = find_type
+
+        let find_impl = get_jit_table_find(unsafe(reinterpret<int> t))
         let find_ptr_type = LLVMPointerType(find_type, 0u)
-        var jit_table_find = LLVMAddGlobal(llvm_module, LLVMPointerType(find_ptr_type, 0u), FN_JIT_TABLE_FIND(t))
-        g_fn_types[FN_JIT_TABLE_FIND(t)] = find_type
-        LLVMSetInitializer(jit_table_find, types.ConstPtr(get_jit_table_find(unsafe(reinterpret<int> t)) |> intptr(), find_ptr_type))
+        var jit_table_find = LLVMAddGlobal(llvm_module, LLVMPointerType(find_ptr_type, 0u), find_name)
+        LLVMSetInitializer(jit_table_find, types.ConstPtr(find_impl |> intptr(), find_ptr_type))
+
+        let find_variable = dll.handle == null ? null : dll.get_function_address(DllName(find_name))
+        if (find_variable != null) {
+            dll.set_function_address(DllName(find_name), find_impl)
+        }
+
         // bool jit_table_erase ( Table * tab, KeyType key, int32_t valueTypeSize, Context * context )
         let erase_type = LLVMFunctionType(types.t_int1,                        // bool result
                 fixed_array<LLVMTypeRef>(types.LLVMVoidPtrType(),   // table ptr
@@ -231,15 +249,120 @@ def private add_table_methods(llvm_module : LLVMOpaqueModule?; llvm_engine : LLV
                 types.t_int32,                                    // valueTypeSize
                 types.LLVMVoidPtrType()                 // context
                 ))
+        let erase_name = FN_JIT_TABLE_ERASE(t)
         let erase_ptr_type = LLVMPointerType(erase_type, 0u)
-        var jit_table_erase = LLVMAddGlobal(llvm_module, LLVMPointerType(erase_ptr_type, 0u), FN_JIT_TABLE_ERASE(t))
-        g_fn_types[FN_JIT_TABLE_ERASE(t)] = erase_type
-        LLVMSetInitializer(jit_table_erase, types.ConstPtr(get_jit_table_erase(unsafe(reinterpret<int> t)) |> intptr(), erase_ptr_type))
+        let erase_impl = get_jit_table_erase(unsafe(reinterpret<int> t))
+
+        var jit_table_erase = LLVMAddGlobal(llvm_module, LLVMPointerType(erase_ptr_type, 0u), erase_name)
+        LLVMSetInitializer(jit_table_erase, types.ConstPtr(erase_impl |> intptr(), erase_ptr_type))
+
+        let erase_variable = dll.handle == null ? null : dll.get_function_address(DllName(erase_name))
+        g_fn_types[erase_name] = erase_type
+        if (erase_variable != null) {
+            dll.set_function_address(DllName(erase_name), find_impl)
+        }
     }
 }
 
+struct public DllName {
+    name : string
+
+    def DllName(s : string) {
+        name = s |> replace_multiple([("@", "`At`")])
+    }
+
+    def const impl() {
+        return "{name} implementation"
+    }
+
+    def const publ() {
+        return "{name}"
+    }
+
+    def const id() {
+        return "{name} hash"
+    }
+}
+
+def public get_dll_fn_name(fn : Function?) : DllName {
+    return DllName(fn |> get_mangled_name())
+}
+
+def public get_dll_fn_name(fn : FunctionPtr) : DllName {
+    return DllName(fn |> get_mangled_name())
+}
+
+
+
+
+struct public DLLHandle {
+    handle : void?
+    created_fileinfos : table<FileInfo?; FileInfo?>
+
+    def reset() {
+        if (handle != null) {
+            handle |> close_dynamic_library()
+            handle = null
+        }
+    }
+
+    def has_function(fn : FunctionPtr) : bool {
+        if (handle == null) {
+            return false
+        }
+        var written_hash = get_function_hash(get_dll_fn_name(fn))
+        let is_ok = (written_hash != null && get_function_aot_hash(fn |> get_ptr) == *written_hash)
+        return is_ok;
+    }
+
+    def get_function_address(fn : DllName) {
+        assert(handle != null, "dynamic_lib_handle is null")
+        return handle |> get_function_address(fn.publ());
+    }
+
+    def get_function_impl(fn : DllName) {
+        assert(handle != null, "dynamic_lib_handle is null")
+        return handle |> get_function_address(fn.impl());
+    }
+
+    def get_function_hash(fn : DllName) {
+        return unsafe(reinterpret<uint64?>(handle |> get_function_address(fn.id())))
+    }
+
+
+    def set_function_address(fn : DllName, ptr : void?) {
+        assert(handle != null, "dynamic_lib_handle is null")
+        var fn_addr = unsafe(reinterpret<void ??>(handle |> get_function_address(fn.publ())));
+        // assert(fn_addr != null)
+        if (fn_addr == null) {
+            return false
+        }
+        *fn_addr = ptr;
+        return true
+    }
+
+
+    def create_fileinfo(fi : FileInfo?) {
+        var res : FileInfo? = null;
+        if (created_fileinfos[fi] == null) {
+            let fi_ptr = unsafe(reinterpret<void?>(fi))
+            var sym = get_function_address(DllName("fileinfo_at_{fi_ptr}"))
+            var sym_name = get_function_address(DllName("fileinfo_at_{fi_ptr}_name"))
+            var name = unsafe(reinterpret<string>(sym_name))
+
+            let src_fi = unsafe(reinterpret<FileInfo?>(sym))
+            recreate_fileinfo_name(src_fi, name)
+            return src_fi
+        } else {
+            return created_fileinfos[fi]
+        }
+    }
+
+}
+
+
 [macro_function]
-def public init_jit {
+def public init_jit(var dll : DLLHandle?) {
     return if (is_in_completion() || is_compiling_macros())
     return if (g_mod != null)    // prevent double init
     LLVMLinkInMCJIT()
@@ -383,8 +506,7 @@ def public init_jit {
     LLVMAddAttributesToFunction(jit_array_unlock, fixed_array(nounwind, willreturn))
     LLVMAddAttributeToFunctionArgumentRange(jit_array_unlock, urange(0, 2), nocapture)
 
-    add_table_methods(g_mod, g_engine, g_prim_t, attrs)
-
+    add_table_methods(g_mod, g_engine, g_prim_t, dll, attrs)
     // int jit_str_cmp ( char * a, char * b )
     var jit_str_cmp = LLVMAddFunctionWithType(g_mod, FN_JIT_STR_CMP,
         LLVMFunctionType(g_prim_t.t_int32,
